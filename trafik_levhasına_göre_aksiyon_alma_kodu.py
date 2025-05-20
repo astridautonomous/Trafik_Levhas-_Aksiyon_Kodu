@@ -3,12 +3,11 @@ import lanelet2.io
 import lanelet2.projection
 import lanelet2.traffic_rules
 import lanelet2.routing
-
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Int32MultiArray
 
-# ROS 2 Publisher sınıfı
+# ROS2 Publisher class
 class LaneletPublisher(Node):
     def __init__(self, yasakli_ids):
         super().__init__('lanelet_block_publisher')
@@ -18,7 +17,7 @@ class LaneletPublisher(Node):
         self.publisher_.publish(msg)
         self.get_logger().info(f"Yasaklı lanelet ID'leri yayınlandı: {yasakli_ids}")
 
-# Harita yükleme
+# Harita Yükleme
 filename = "/home/emirhan/Documents/simulationitrack_main_correct_new.3.osm"
 latitude, longitude = 0.0, 0.0
 origin = lanelet2.io.Origin(latitude, longitude)
@@ -34,7 +33,6 @@ routing_graph = lanelet2.routing.RoutingGraph(map, traffic_rules)
 print("Harita başarıyla yüklendi!")
 print("Lanelet sayısı:", len(map.laneletLayer))
 
-# Kullanıcı girişi
 detected_sign = input("Tespit edilen levhayı girin: ").strip()
 lanelet_id = int(input("Mevcut lanelet ID'sini girin: ").strip())
 
@@ -43,14 +41,21 @@ if lanelet_id not in map.laneletLayer:
 
 current_lanelet = map.laneletLayer[lanelet_id]
 followers = routing_graph.following(current_lanelet)
+
 if not followers:
     print(f"Lanelet {lanelet_id} için takip edilebilecek lanelet yok.")
     exit(0)
 
 allowed, blocked, yasakli_lanelet_idler = [], [], []
-turn_dirs = [f.attributes["turn_direction"] if "turn_direction" in f.attributes else "belirtilmemiş" for f in followers]
 
-def relevant_direction_exists(sign, directions):
+# Fonksiyon: yön var mı
+def relevant_direction_exists(sign, followers):
+    directions = []
+    for f in followers:
+        td = f.attributes["turn_direction"].lower() if "turn_direction" in f.attributes else ""
+        if td:
+            directions.append(td)
+
     if sign == "saga donulmez": return "right" in directions
     elif sign == "sola donulmez": return "left" in directions
     elif sign == "sola mecburi yon": return "left" in directions
@@ -59,22 +64,24 @@ def relevant_direction_exists(sign, directions):
     elif sign == "Ileri ve saga mecburi yon": return "straight" in directions or "right" in directions
     elif sign == "Ileri ve sola mecburi yon": return "straight" in directions or "left" in directions
     elif sign in ["Ileriden sola mecburi yon", "Ileriden saga mecburi yon"]:
-        return "straight" in directions
+        return any(f.attributes["turn_direction"].lower() == "straight" if "turn_direction" in f.attributes else False for f in followers)
     return False
 
+# Fonksiyon: ileri sonra gereken yön var mı
 def straight_followed_but_turn_missing(followers, required_td):
     for nxt in followers:
-        td = nxt.attributes["turn_direction"] if "turn_direction" in nxt.attributes else ""
+        td = nxt.attributes["turn_direction"].lower() if "turn_direction" in nxt.attributes else ""
         if td == "straight":
             second_followers = routing_graph.following(nxt)
             for sec in second_followers:
-                sec_td = sec.attributes["turn_direction"] if "turn_direction" in sec.attributes else ""
+                sec_td = sec.attributes["turn_direction"].lower() if "turn_direction" in sec.attributes else ""
                 if sec_td == required_td:
                     return False
             return True
     return False
 
-if not relevant_direction_exists(detected_sign, turn_dirs):
+# Yön yoksa levha dikkate alınmasın
+if not relevant_direction_exists(detected_sign, followers):
     print(f"Uyarı: '{detected_sign}' levhası için uygun yön bulunamadı. Levha dikkate alınmadı.")
     detected_sign = None
 elif detected_sign == "Ileriden sola mecburi yon" and straight_followed_but_turn_missing(followers, "left"):
@@ -84,8 +91,9 @@ elif detected_sign == "Ileriden saga mecburi yon" and straight_followed_but_turn
     print("Uyarı: 'İleriden sağa mecburi yön' için ileri var ama sağa giden yol yok. Levha dikkate alınmadı.")
     detected_sign = None
 
+# Ana kontrol döngüsü
 for nxt in followers:
-    td = nxt.attributes["turn_direction"] if "turn_direction" in nxt.attributes else "belirtilmemiş"
+    td = nxt.attributes["turn_direction"].lower() if "turn_direction" in nxt.attributes else "belirtilmemiş"
     block = False
 
     if detected_sign == "saga donulmez":
@@ -106,7 +114,7 @@ for nxt in followers:
         if td == "straight":
             second_followers = routing_graph.following(nxt)
             for sec in second_followers:
-                sec_td = sec.attributes["turn_direction"] if "turn_direction" in sec.attributes else "belirtilmemiş"
+                sec_td = sec.attributes["turn_direction"].lower() if "turn_direction" in sec.attributes else "belirtilmemiş"
                 if sec_td != "left":
                     blocked.append((sec.id, sec_td))
                     yasakli_lanelet_idler.append(sec.id)
@@ -116,7 +124,7 @@ for nxt in followers:
         if td == "straight":
             second_followers = routing_graph.following(nxt)
             for sec in second_followers:
-                sec_td = sec.attributes["turn_direction"] if "turn_direction" in sec.attributes else "belirtilmemiş"
+                sec_td = sec.attributes["turn_direction"].lower() if "turn_direction" in sec.attributes else "belirtilmemiş"
                 if sec_td != "right":
                     blocked.append((sec.id, sec_td))
                     yasakli_lanelet_idler.append(sec.id)
@@ -131,7 +139,7 @@ for nxt in followers:
             allowed.append((nxt.id, td))
 
 # Sonuçları yazdır
-print(f"\nLevha: {detected_sign if detected_sign else 'YOK (uygun yön yok)'}")
+print(f"\nLevha: {detected_sign if detected_sign else 'YOK (yön bulunamadı)'}")
 print(f"Mevcut lanelet ID: {lanelet_id}")
 
 print("\n→ İzin verilen follower lanelet'ler:")
@@ -145,11 +153,10 @@ for ll_id, td in blocked:
 print("\n→ Yasaklı lanelet ID listesi:")
 print(yasakli_lanelet_idler)
 
-# ROS 2 yayınını başlat
+# ROS 2 publisher başlat
 rclpy.init()
 lanelet_node = LaneletPublisher(yasakli_lanelet_idler)
-rclpy.spin_once(lanelet_node, timeout_sec=1.0)
+rclpy.spin_once(lanelet_node, timeout_sec=1)
 lanelet_node.destroy_node()
 rclpy.shutdown()
-
 
