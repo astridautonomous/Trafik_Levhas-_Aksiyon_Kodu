@@ -7,6 +7,7 @@ import lanelet2.routing
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Int32MultiArray
+from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSReliabilityPolicy
 
 # Harita Yükleme
 filename = "/home/emirhan/Documents/simulationitrack_main_correct_new.3.osm"
@@ -159,16 +160,29 @@ print(yasakli_lanelet_idler)
 class LaneletPublisher(Node):
     def __init__(self, yasakli_ids):
         super().__init__('lanelet_block_publisher')
-        self.publisher_ = self.create_publisher(Int32MultiArray, 'blocked_lanelet_ids', 10)
+
+        qos_profile = QoSProfile(
+            reliability=QoSReliabilityPolicy.RELIABLE,
+            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+            depth=10
+        )
+
+        self.publisher_ = self.create_publisher(Int32MultiArray, 'blocked_lanelet_ids', qos_profile)
+
         msg = Int32MultiArray()
         msg.data = yasakli_ids
+
         self.publisher_.publish(msg)
         self.get_logger().info(f"Yasaklı lanelet ID'leri yayınlandı: {yasakli_ids}")
 
-rclpy.init()
-lanelet_node = LaneletPublisher(yasakli_lanelet_idler)
-rclpy.spin_once(lanelet_node, timeout_sec=1)
-lanelet_node.destroy_node()
-rclpy.shutdown()
+def main():
+    rclpy.init()
+    yasakli_ids = yasakli_lanelet_idler  # burada otomatik veya dıştan gelen liste olabilir
+    lanelet_node = LaneletPublisher(yasakli_ids)
+    rclpy.spin(lanelet_node)
+    lanelet_node.destroy_node()
+    rclpy.shutdown()
 
+if __name__ == '__main__':
+    main()
 
