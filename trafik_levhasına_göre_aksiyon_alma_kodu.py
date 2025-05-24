@@ -7,10 +7,11 @@ import lanelet2.routing
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Int32MultiArray
+from std_msgs.msg import Float32MultiArray
 from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSReliabilityPolicy
 
 # Harita Yükleme
-filename = "/home/emirhan/Documents/simulationitrack_main_correct_new.3.osm"
+filename = "/home/emirhan/Documents/simulationtrack_final_main_.osm"
 latitude, longitude = 0.0, 0.0
 origin = lanelet2.io.Origin(latitude, longitude)
 projector = lanelet2.projection.LocalCartesianProjector(origin)
@@ -57,6 +58,10 @@ def relevant_direction_exists(sign, followers):
         return "left" in directions
     elif sign == "saga mecburi yon":
         return "right" in directions
+    elif sign == "Durak":
+        return True
+    elif sign == "Park yeri":
+        return True
     elif sign == "Ileri mecburi yon":
         return "straight" in directions
     elif sign == "Ileri ve saga mecburi yon":
@@ -93,6 +98,8 @@ elif detected_sign == "Ileriden sola mecburi yon" and straight_followed_but_turn
 elif detected_sign == "Ileriden saga mecburi yon" and straight_followed_but_turn_missing(followers, "right"):
     print("Uyarı: 'İleriden sağa mecburi yön' için ileri var ama sağa giden yol yok. Levha dikkate alınmadı.")
     detected_sign = None
+
+manevra_pointler=[]
 
 # Ana işlem döngüsü
 for nxt in followers:
@@ -141,6 +148,64 @@ for nxt in followers:
         else:
             allowed.append((nxt.id, td))
 
+
+# Durak manevrası ve park manevrası için Döngü
+if detected_sign in ("Durak", "Park yeri"):
+    bulundu_mu = False
+    linestring_type = input("\nAranacak linestring 'type' değerini girin (örnek: durak1, durak2, manevra): ").strip()
+
+    if detected_sign == "Durak":
+        print(f"\n'Durak' levhası tespit edildi. '{linestring_type}' isimli linestring aranıyor...")
+
+        for ls in map.lineStringLayer:
+            if "type" in ls.attributes and ls.attributes["type"] == linestring_type:
+                print(f"→ '{linestring_type}' bulundu! Noktalar:")
+
+                for pt in ls:
+                    if "local_x" in pt.attributes and "local_y" in pt.attributes:
+                        x = float(pt.attributes["local_x"])
+                        y = float(pt.attributes["local_y"])
+                        point = (x, y)
+                        manevra_pointler.append(point)
+                        print(f"   • Point: x={x}, y={y}")
+                    else:
+                        print("   • Uyarı: local_x veya local_y etiketi bulunamadı. Nokta atlandı.")
+
+                bulundu_mu = True
+                break  # sadece ilk eşleşen linestring alınır
+
+        if not bulundu_mu:
+            print(f"Uyarı: type='{linestring_type}' olan bir linestring bulunamadı.")
+
+        print(f"\nToplam manevra noktası sayısı: {len(manevra_pointler)}")
+
+    elif detected_sign == "Park yeri":
+        print(f"\n'Park yeri' levhası tespit edildi. '{linestring_type}' adlı linestring aranıyor...")
+
+        for ls in map.lineStringLayer:
+            if "type" in ls.attributes and ls.attributes["type"] == linestring_type:
+                print(f"→ '{linestring_type}' bulundu! Noktalar:")
+
+                for pt in ls:
+                    if "local_x" in pt.attributes and "local_y" in pt.attributes:
+                        x = float(pt.attributes["local_x"])
+                        y = float(pt.attributes["local_y"])
+                        point = (x, y)
+                        manevra_pointler.append(point)
+                        print(f"   • Point: x={x}, y={y}")
+                    else:
+                        print("   • Uyarı: local_x veya local_y etiketi bulunamadı. Nokta atlandı.")
+
+                bulundu_mu = True
+                break
+
+        if not bulundu_mu:
+            print(f"Uyarı: type='{linestring_type}' olan bir linestring bulunamadı.")
+
+        print(f"\nToplam manevra noktası sayısı: {len(manevra_pointler)}")
+
+
+print(f"manevra için pointler:{manevra_pointler}")
 # Sonuç yazdır
 print(f"\nLevha: {detected_sign if detected_sign else 'YOK (yön bulunamadı)'}")
 print(f"Mevcut lanelet ID: {lanelet_id}")
@@ -175,14 +240,53 @@ class LaneletPublisher(Node):
         self.publisher_.publish(msg)
         self.get_logger().info(f"Yasaklı lanelet ID'leri yayınlandı: {yasakli_ids}")
 
+# === Manevra Noktaları Publisher Node ===
+class ManevraPointPublisher(Node):
+    def __init__(self, point_list):
+        super().__init__('manevra_point_publisher')
+
+        qos_profile = QoSProfile(
+            reliability=QoSReliabilityPolicy.RELIABLE,
+            durability=QoSDurabilityPolicy.TRANSIENT_LOCAL,
+            depth=10
+        )
+
+        self.publisher_ = self.create_publisher(Float32MultiArray, 'detected_pose', qos_profile)
+
+        # Listeyi düzleştir (x1, y1, x2, y2, ...)
+        flattened = [coord for point in point_list for coord in point]
+
+        msg = Float32MultiArray()
+        msg.data = flattened
+
+        self.publisher_.publish(msg)
+        for i in range(len(point_list)):
+            x, y = point_list[i]
+            self.get_logger().info(f"Point {i+1}: x={x}, y={y}")
+
+# === Main ===
 def main():
     rclpy.init()
-    yasakli_ids = yasakli_lanelet_idler  # burada otomatik veya dıştan gelen liste olabilir
-    lanelet_node = LaneletPublisher(yasakli_ids)
-    rclpy.spin(lanelet_node)
-    lanelet_node.destroy_node()
-    rclpy.shutdown()
+
+    # Yasaklı lanelet ID'lerini yayınlayan node
+    lanelet_node = LaneletPublisher(yasakli_lanelet_idler)
+
+    # Manevra noktalarını yayınlayan node
+    point_node = ManevraPointPublisher(manevra_pointler)
+
+    # Her iki node birlikte çalışsın
+    executor = rclpy.executors.MultiThreadedExecutor()
+    executor.add_node(lanelet_node)
+    executor.add_node(point_node)
+
+    try:
+        executor.spin()
+    finally:
+        lanelet_node.destroy_node()
+        point_node.destroy_node()
+        rclpy.shutdown()
 
 if __name__ == '__main__':
     main()
+
 
