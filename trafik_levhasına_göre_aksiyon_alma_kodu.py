@@ -47,7 +47,7 @@ def relevant_direction_exists(sign, followers):
     directions = []
     for f in followers:
         if "turn_direction" in f.attributes:
-            td = f.attributes["turn_direction"].lower()
+            td = f.attributes["turn_direction"]
             directions.append(td)
 
     if sign == "saga donulmez":
@@ -70,7 +70,7 @@ def relevant_direction_exists(sign, followers):
         return "straight" in directions or "left" in directions
     elif sign in ["Ileriden sola mecburi yon", "Ileriden saga mecburi yon"]:
         return any(
-            "turn_direction" in f.attributes and f.attributes["turn_direction"].lower() == "straight"
+            "turn_direction" in f.attributes and f.attributes["turn_direction"] == "straight"
             for f in followers
         )
     return False
